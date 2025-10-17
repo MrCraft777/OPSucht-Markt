@@ -1,0 +1,62 @@
+{
+  "labymod": {
+    "hudWidgetCategory": {
+      "opsuchtmarkt": {
+        "name": "Opsucht Markt",
+        "description": "Hier werden alle Widgets vom Opsucht Markt Addon angezeigt."
+      }
+    }
+  },
+  "opsuchtmarkt": {
+    "settings": {
+      "displayMode": {
+        "name": "Stelle ein, ob nur der Verkaufspreis, der Kaufpreis oder beide sichtbar sein sollen."
+      },
+      "enabled": {
+        "name": "Aktiviert"
+      },
+      "useStackSize": {
+        "name": "Stack Größe verwenden"
+      },
+      "showItemName": {
+        "name": "Itemnamen anzeigen"
+      },
+      "buyColor": {
+        "name": "Kaufpreis Farbe"
+      },
+      "sellColor": {
+        "name": "Verkaufspreis Farbe"
+      }
+    },
+    "hudWidget": {
+      "item_price": {
+        "name": "Preis"
+      },
+      "opsucht_item_price": {
+        "name": "Preis"
+      },
+      "record_widget": {
+        "name": "Spielerrekord"
+      },
+      "opsucht_record_widget": {
+        "name": "Spielerrekord von OPSUCHT"
+      }
+    },
+    "messages": {
+      "loading": "Lädt...",
+      "noItem": "Kein Item",
+      "noPrice": "Item hat keinen Preis",
+      "unknown": "Unbekannt"
+    },
+    "prices": {
+      "noBuyPrice": "$0",
+      "noSellPrice": "$0"
+    },
+    "currencySymbol": "$",
+    "displayMode": {
+      "buy": "Nur Kaufpreis",
+      "sell": "Nur Verkaufspreis",
+      "both": "Beide Preise"
+    }
+  }
+}
