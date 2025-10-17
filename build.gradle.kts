@@ -20,6 +20,12 @@ labyMod {
         }
     }
 
+    tasks.jar {
+        from("LICENSE.txt") {
+            into("/")
+        }
+    }
+
     addonInfo {
         namespace = "opsuchtmarkt"
         displayName = "OPSucht Markt"
