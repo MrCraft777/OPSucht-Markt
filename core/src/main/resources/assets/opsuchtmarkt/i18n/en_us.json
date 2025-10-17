@@ -49,8 +49,7 @@
       "unknown": "Unbekannt"
     },
     "prices": {
-      "noBuyPrice": "$0",
-      "noSellPrice": "$0"
+      "noPrice": "Item hat keinen Preis"
     },
     "currencySymbol": "$",
     "displayMode": {

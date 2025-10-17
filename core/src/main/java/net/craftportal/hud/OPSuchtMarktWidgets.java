@@ -147,10 +147,7 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
 
     if (isEditorContext) {
       isEditorMode = true;
-      Component previewName = formatItemIdComponent("beacon");
-      Component preview = createPriceText(485857.0, 412000.0, 1, false);
-      Component displayText = createDisplayText(previewName, preview, 1, false, true);
-      this.nameLine.updateAndFlush(displayText);
+      this.nameLine.updateAndFlush(this.loadingComponent);
       this.nameLine.setState(State.VISIBLE);
       return;
     }
@@ -161,9 +158,9 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
       this.nameLine.setState(State.HIDDEN);
       stopExecutorIfRunning();
       return;
-    } else {
-      ensureExecutorRunning();
     }
+
+    ensureExecutorRunning();
 
     long now = System.currentTimeMillis();
     if (now - lastAutoDetect > AUTO_DETECT_INTERVAL_MS) {
@@ -219,8 +216,7 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
     }
 
     if (priceData.isItemNotFound()) {
-      Component noPrice = Component.translatable("opsuchtmarkt.prices.noPrice");
-      return createDisplayText(displayNameComp, noPrice, itemData.stackSize, useStackSize, showItemName);
+      return Component.translatable("opsuchtmarkt.prices.noPrice");
     } else {
       Component priceText = createPriceText(priceData.getBuyPrice(), priceData.getSellPrice(),
           itemData.stackSize, useStackSize);

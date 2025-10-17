@@ -27,7 +27,7 @@ public class OPSuchtMarktConfig extends AddonConfig {
   private final ConfigProperty<Color> buyColor = ConfigProperty.create(Color.ofRGB(85, 255, 255));
 
   @ColorPickerSetting
-  private final ConfigProperty<Color> sellColor = ConfigProperty.create(Color.ofRGB(255, 0, 0));
+  private final ConfigProperty<Color> sellColor = ConfigProperty.create(Color.ofRGB(255, 85, 85));
 
   @Override
   public ConfigProperty<Boolean> enabled() {
