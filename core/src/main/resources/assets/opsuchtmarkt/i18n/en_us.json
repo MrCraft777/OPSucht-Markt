@@ -15,6 +15,9 @@
       "enabled": {
         "name": "Aktiviert"
       },
+      "showItemCount": {
+        "name": "Inventarmenge anzeigen"
+      },
       "useStackSize": {
         "name": "Stack Größe verwenden"
       },
@@ -29,6 +32,9 @@
       }
     },
     "hudWidget": {
+      "inventory_widget": {
+        "name": "Inventarwert"
+        },
       "item_price": {
         "name": "Preis"
       },
@@ -45,7 +51,9 @@
     "messages": {
       "loading": "Lädt...",
       "noItem": "Kein Item",
+      "calculating": "Berechnen...",
       "noPrice": "Item hat keinen Preis",
+      "items": "Items",
       "unknown": "Unbekannt"
     },
     "prices": {

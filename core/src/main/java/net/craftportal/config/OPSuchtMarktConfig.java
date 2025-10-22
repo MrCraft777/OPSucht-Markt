@@ -23,6 +23,9 @@ public class OPSuchtMarktConfig extends AddonConfig {
   @SwitchSetting
   private final ConfigProperty<Boolean> showItemName = ConfigProperty.create(true);
 
+  @SwitchSetting
+  private final ConfigProperty<Boolean> showItemCount = ConfigProperty.create(true);
+
   @ColorPickerSetting
   private final ConfigProperty<Color> buyColor = ConfigProperty.create(Color.ofRGB(85, 255, 255));
 
@@ -46,6 +49,10 @@ public class OPSuchtMarktConfig extends AddonConfig {
     return showItemName;
   }
 
+  public ConfigProperty<Boolean> showItemCount() {
+    return showItemCount;
+  }
+
   public ConfigProperty<Color> buyColor() {
     return buyColor;
   }
@@ -55,9 +62,9 @@ public class OPSuchtMarktConfig extends AddonConfig {
   }
 
   public enum DisplayMode {
-    BUY("opsuchtmarkt.displayMode.buy"),
-    SELL("opsuchtmarkt.displayMode.sell"),
-    BOTH("opsuchtmarkt.displayMode.both");
+    BUY("opsuchtmarkt.settings.displayMode.buy"),
+    SELL("opsuchtmarkt.settings.displayMode.sell"),
+    BOTH("opsuchtmarkt.settings.displayMode.both");
 
     private final String translationKey;
 
@@ -67,11 +74,6 @@ public class OPSuchtMarktConfig extends AddonConfig {
 
     public String getTranslationKey() {
       return translationKey;
-    }
-
-    @Override
-    public String toString() {
-      return net.labymod.api.util.I18n.translate(translationKey);
     }
   }
 }
