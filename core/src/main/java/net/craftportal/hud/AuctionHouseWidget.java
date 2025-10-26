@@ -427,7 +427,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
       }
     }
     return null;
-  }
+  },
 
   private static class AuctionData {
     final String material;
