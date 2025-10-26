@@ -84,6 +84,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     try {
       this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt", "textures/inventory_value_widget.png")));
     } catch (Throwable t) {
+      //
     }
     this.numberFormat = initializeNumberFormat();
     initializeColorCache();
