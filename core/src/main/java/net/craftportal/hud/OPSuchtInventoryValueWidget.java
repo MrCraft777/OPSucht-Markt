@@ -333,7 +333,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   }
 
   private void loadMarketJsonFromAPI() {
-    try {
+    try {ö
       String apiUrl = "https://api.opsucht.net/market/prices";
       String resp = httpGet(apiUrl);
       if (resp != null && !resp.isEmpty()) {
