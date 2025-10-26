@@ -20,7 +20,7 @@ import com.google.gson.JsonParser;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.text.NumberFormat;
 import java.time.Duration;
 import java.time.Instant;
@@ -77,7 +77,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     try {
       this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt",
           "textures/auction_widget.png")));
-    } catch (Throwable t) {
+    } catch (Throwable ignored) {
     }
 
     this.bindCategory(category);
@@ -121,11 +121,13 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
     ensureLineCount(2);
 
-    auctionLines.get(0).updateAndFlush(Component.text("Diamond - $1,000,000 - 2h 30m"));
-    auctionLines.get(0).setState(State.VISIBLE);
+    TextLine firstLine = auctionLines.get(0);
+    firstLine.updateAndFlush(Component.text("Diamond - $1,000,000 - 2h 30m"));
+    firstLine.setState(State.VISIBLE);
 
-    auctionLines.get(1).updateAndFlush(Component.text("Emerald - $500,000 - 1h 15m"));
-    auctionLines.get(1).setState(State.VISIBLE);
+    TextLine secondLine = auctionLines.get(1);
+    secondLine.updateAndFlush(Component.text("Emerald - $500,000 - 1h 15m"));
+    secondLine.setState(State.VISIBLE);
 
     for (int i = 2; i < auctionLines.size(); i++) {
       auctionLines.get(i).setState(State.HIDDEN);
@@ -156,8 +158,9 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
     if (auctions == null || auctions.isEmpty()) {
       ensureLineCount(1);
-      auctionLines.get(0).updateAndFlush(this.noAuctionsComponent);
-      auctionLines.get(0).setState(State.VISIBLE);
+      TextLine firstLine = auctionLines.get(0);
+      firstLine.updateAndFlush(this.noAuctionsComponent);
+      firstLine.setState(State.VISIBLE);
       for (int i = 1; i < auctionLines.size(); i++) {
         auctionLines.get(i).setState(State.HIDDEN);
       }
@@ -170,8 +173,9 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     for (int i = 0; i < actualCount; i++) {
       AuctionData auction = auctions.get(i);
       Component line = buildAuctionLine(auction);
-      auctionLines.get(i).updateAndFlush(line);
-      auctionLines.get(i).setState(State.VISIBLE);
+      TextLine textLine = auctionLines.get(i);
+      textLine.updateAndFlush(line);
+      textLine.setState(State.VISIBLE);
     }
 
     for (int i = actualCount; i < auctionLines.size(); i++) {
@@ -238,7 +242,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
       if (i > 0) {
         stringBuilder.append(" ");
       }
-      if (part.length() >= 1) {
+      if (!part.isEmpty()) {
         stringBuilder.append(Character.toUpperCase(part.charAt(0)));
         if (part.length() > 1) {
           stringBuilder.append(part.substring(1));
@@ -283,8 +287,8 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
   }
 
   private void hideAuctionLines() {
-    for (int i = 0; i < auctionLines.size(); i++) {
-      auctionLines.get(i).setState(State.HIDDEN);
+    for (TextLine line : auctionLines) {
+      line.setState(State.HIDDEN);
     }
   }
 
@@ -377,7 +381,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
               auctions.add(new AuctionData(material, amount, displayName, currentBid, endTime));
               count++;
             }
-          } catch (Exception e) {
+          } catch (Exception ignored) {
           }
         }
 
@@ -387,7 +391,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         isFirstLoad.set(false);
         currentAuctions.set(new ArrayList<>());
       }
-    } catch (Exception e) {
+    } catch (Exception ignored) {
       isFirstLoad.set(false);
       currentAuctions.set(new ArrayList<>());
     } finally {
@@ -398,8 +402,8 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
   private String httpGet(String urlStr) {
     HttpURLConnection conn = null;
     try {
-      URL url = new URL(urlStr);
-      conn = (HttpURLConnection) url.openConnection();
+      URI uri = URI.create(urlStr);
+      conn = (HttpURLConnection) uri.toURL().openConnection();
       conn.setRequestMethod("GET");
       conn.setConnectTimeout(5000);
       conn.setReadTimeout(5000);
@@ -416,7 +420,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         br.close();
         return sb.toString();
       }
-    } catch (Exception e) {
+    } catch (Exception ignored) {
     } finally {
       if (conn != null) {
         conn.disconnect();
