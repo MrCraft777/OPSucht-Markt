@@ -13,12 +13,10 @@ import net.labymod.api.client.resources.ResourceLocation;
 import net.labymod.api.client.world.item.ItemStack;
 import net.craftportal.config.OPSuchtMarktConfig;
 import net.craftportal.config.OPSuchtMarktConfig.DisplayMode;
-
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -31,7 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
+import java.util.concurrent.atomic.AtomicBoolean;
 import static net.labymod.api.Laby.labyAPI;
 
 public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConfig> {
@@ -41,13 +39,12 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
 
   private TextLine valueLine;
   private long lastInventoryCheck = 0L;
-  private static final long INVENTORY_CHECK_INTERVAL_MS = 1000;
+  private static final long INVENTORY_CHECK_INTERVAL_MS = 2000;
 
   private ScheduledExecutorService executor = null;
   private final Object executorLock = new Object();
 
   private final ConcurrentHashMap<String, CachedPriceData> priceCache = new ConcurrentHashMap<>();
-  private final ConcurrentHashMap<String, Boolean> pendingRequests = new ConcurrentHashMap<>();
   private static final long PRICE_CACHE_DURATION_MS = 30000;
   private static final long CACHE_CLEANUP_INTERVAL_MS = 300000;
 
@@ -66,51 +63,58 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   private net.labymod.api.util.Color lastConfigSellColor;
   private boolean lastShowItemCount = true;
 
-  private final NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.GERMAN);
+  private final NumberFormat numberFormat;
 
   private static final String CURRENCY_SYMBOL = "$";
 
   private boolean isEditorMode = false;
 
+  private final AtomicReference<JsonObject> marketJsonCache = new AtomicReference<>(null);
+  private volatile long marketCacheTimestamp = 0L;
+  private static final long MARKET_CACHE_MS = 30000;
+  private final AtomicBoolean pendingMarketRefresh = new AtomicBoolean(false);
+  private final AtomicBoolean isCalculating = new AtomicBoolean(false);
+  private final AtomicBoolean marketDataLoaded = new AtomicBoolean(false);
+
   public OPSuchtInventoryValueWidget(HudWidgetCategory category, OPSuchtMarktConfig config) {
     super("inventory_widget");
-
     this.config = config;
     this.loadingComponent = Component.translatable("opsuchtmarkt.messages.loading");
     this.calculatingComponent = Component.translatable("opsuchtmarkt.messages.calculating");
     this.noItemsComponent = Component.translatable("opsuchtmarkt.messages.noItem");
     this.separatorComponent = Component.text(" - ").color(TextColor.color(170, 170, 170));
-
     try {
-      this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt",
-          "textures/inventory_value_widget.png")));
+      this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt", "textures/inventory_value_widget.png")));
     } catch (Throwable t) {
     }
-
+    this.numberFormat = initializeNumberFormat();
     initializeColorCache();
     this.lastShowItemCount = this.config.showItemCount().get();
     this.bindCategory(category);
   }
 
+  private NumberFormat initializeNumberFormat() {
+    Locale locale = Locale.getDefault();
+    try {
+      return NumberFormat.getNumberInstance(locale);
+    } catch (Exception e) {
+      return NumberFormat.getNumberInstance(Locale.GERMAN);
+    }
+  }
+
   @Override
   public void load(TextHudWidgetConfig config) {
     super.load(config);
-    this.valueLine = createLine(
-        Component.translatable("opsuchtmarkt.hudWidget.inventory_widget.name"),
-        this.loadingComponent
-    );
+    this.valueLine = createLine(Component.translatable("opsuchtmarkt.hudWidget.inventory_widget.name"), this.loadingComponent);
   }
 
   private void initializeColorCache() {
     net.labymod.api.util.Color currentBuyColor = this.config.buyColor().get();
     net.labymod.api.util.Color currentSellColor = this.config.sellColor().get();
-
     this.lastConfigBuyColor = currentBuyColor;
     this.lastConfigSellColor = currentSellColor;
-
     this.buyColorCache = TextColor.color(currentBuyColor.getRed(), currentBuyColor.getGreen(), currentBuyColor.getBlue());
     this.sellColorCache = TextColor.color(currentSellColor.getRed(), currentSellColor.getGreen(), currentSellColor.getBlue());
-
     this.lastBuyColor = currentBuyColor.getRed() << 16 | currentBuyColor.getGreen() << 8 | currentBuyColor.getBlue();
     this.lastSellColor = currentSellColor.getRed() << 16 | currentSellColor.getGreen() << 8 | currentSellColor.getBlue();
   }
@@ -119,28 +123,17 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     net.labymod.api.util.Color currentBuyColor = this.config.buyColor().get();
     net.labymod.api.util.Color currentSellColor = this.config.sellColor().get();
     boolean currentShowItemCount = this.config.showItemCount().get();
-
-    boolean buyColorChanged = currentBuyColor.getRed() != lastConfigBuyColor.getRed() ||
-        currentBuyColor.getGreen() != lastConfigBuyColor.getGreen() ||
-        currentBuyColor.getBlue() != lastConfigBuyColor.getBlue();
-
-    boolean sellColorChanged = currentSellColor.getRed() != lastConfigSellColor.getRed() ||
-        currentSellColor.getGreen() != lastConfigSellColor.getGreen() ||
-        currentSellColor.getBlue() != lastConfigSellColor.getBlue();
-
+    boolean buyColorChanged = currentBuyColor.getRed() != lastConfigBuyColor.getRed() || currentBuyColor.getGreen() != lastConfigBuyColor.getGreen() || currentBuyColor.getBlue() != lastConfigBuyColor.getBlue();
+    boolean sellColorChanged = currentSellColor.getRed() != lastConfigSellColor.getRed() || currentSellColor.getGreen() != lastConfigSellColor.getGreen() || currentSellColor.getBlue() != lastConfigSellColor.getBlue();
     boolean showItemCountChanged = currentShowItemCount != lastShowItemCount;
-
     if (buyColorChanged || sellColorChanged || showItemCountChanged) {
       this.lastConfigBuyColor = currentBuyColor;
       this.lastConfigSellColor = currentSellColor;
       this.lastShowItemCount = currentShowItemCount;
-
       this.buyColorCache = TextColor.color(currentBuyColor.getRed(), currentBuyColor.getGreen(), currentBuyColor.getBlue());
       this.sellColorCache = TextColor.color(currentSellColor.getRed(), currentSellColor.getGreen(), currentSellColor.getBlue());
-
       this.lastBuyColor = currentBuyColor.getRed() << 16 | currentBuyColor.getGreen() << 8 | currentBuyColor.getBlue();
       this.lastSellColor = currentSellColor.getRed() << 16 | currentSellColor.getGreen() << 8 | currentSellColor.getBlue();
-
       lastDisplayedKey.set(null);
     }
   }
@@ -148,80 +141,72 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   @Override
   public void onTick(boolean isEditorContext) {
     updateColorCacheIfNeeded();
-
     if (isEditorContext) {
       isEditorMode = true;
       this.valueLine.updateAndFlush(this.loadingComponent);
       this.valueLine.setState(State.VISIBLE);
       return;
     }
-
     isEditorMode = false;
-
     if (this.config == null || !this.config.enabled().get()) {
       this.valueLine.setState(State.HIDDEN);
       stopExecutorIfRunning();
       return;
     }
-
     ensureExecutorRunning();
 
+    if (!marketDataLoaded.get() && marketJsonCache.get() == null && pendingMarketRefresh.compareAndSet(false, true)) {
+      executor.submit(() -> {
+        try {
+          loadMarketJsonFromAPI();
+          marketDataLoaded.set(true);
+        } finally {
+          pendingMarketRefresh.set(false);
+        }
+      });
+    }
+
     long now = System.currentTimeMillis();
-    if (now - lastInventoryCheck > INVENTORY_CHECK_INTERVAL_MS) {
+    if (now - lastInventoryCheck > INVENTORY_CHECK_INTERVAL_MS && !isCalculating.get()) {
       lastInventoryCheck = now;
       calculateInventoryValue();
     }
-
     updateDisplay();
   }
 
   private void updateDisplay() {
     InventoryValueData valueData = currentInventoryValue.get();
-
     DisplayMode currentDisplayMode = this.config.displayMode().get();
     boolean currentShowItemCount = this.config.showItemCount().get();
-
-    String key = (valueData != null ? valueData.hashCode() : "null") + ":" +
-        currentDisplayMode.name() + ":" +
-        currentShowItemCount + ":" +
-        lastBuyColor + ":" +
-        lastSellColor;
-
+    String key = (valueData != null ? valueData.hashCode() : "null") + ":" + currentDisplayMode.name() + ":" + currentShowItemCount + ":" + lastBuyColor + ":" + lastSellColor;
     String previousKey = lastDisplayedKey.get();
-
     if (Objects.equals(key, previousKey)) {
       return;
     }
-
     Component displayText = buildDisplayText(valueData, currentDisplayMode);
     this.valueLine.updateAndFlush(displayText);
     this.valueLine.setState(State.VISIBLE);
-
     lastDisplayedKey.set(key);
   }
 
   private Component buildDisplayText(InventoryValueData valueData, DisplayMode displayMode) {
+    if (!marketDataLoaded.get() && marketJsonCache.get() == null) {
+      return this.loadingComponent;
+    }
+
     if (valueData == null) {
       return this.calculatingComponent;
     }
-
     if (valueData.totalItems == 0) {
       return this.noItemsComponent;
     }
-
     if (!valueData.calculationComplete) {
       return this.calculatingComponent;
     }
-
     Component valueText = createValueText(valueData.totalBuyValue, valueData.totalSellValue, displayMode);
-
     if (this.config.showItemCount().get()) {
-      String itemCountText = valueData.totalItems + " " +
-          net.labymod.api.util.I18n.translate("opsuchtmarkt.messages.items");
-      return Component.empty()
-          .append(Component.text(itemCountText))
-          .append(this.separatorComponent)
-          .append(valueText);
+      String itemCountText = valueData.totalItems + " " + net.labymod.api.util.I18n.translate("opsuchtmarkt.messages.items");
+      return Component.empty().append(Component.text(itemCountText)).append(this.separatorComponent).append(valueText);
     } else {
       return valueText;
     }
@@ -242,32 +227,34 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           return Component.translatable("opsuchtmarkt.messages.noSellPrice").color(sellColorCache);
         }
       case BOTH:
-        Component buyComp = (totalBuyValue != null && totalBuyValue > 0)
-            ? Component.text(CURRENCY_SYMBOL + numberFormat.format(totalBuyValue)).color(buyColorCache)
-            : Component.translatable("opsuchtmarkt.messages.noPrice").color(buyColorCache);
-        Component sellComp = (totalSellValue != null && totalSellValue > 0)
-            ? Component.text(CURRENCY_SYMBOL + numberFormat.format(totalSellValue)).color(sellColorCache)
-            : Component.translatable("opsuchtmarkt.messages.noPrice").color(sellColorCache);
-        return Component.empty()
-            .append(buyComp)
-            .append(this.separatorComponent)
-            .append(sellComp);
+        Component buyComp = (totalBuyValue != null && totalBuyValue > 0) ? Component.text(CURRENCY_SYMBOL + numberFormat.format(totalBuyValue)).color(buyColorCache) : Component.translatable("opsuchtmarkt.messages.noPrice").color(buyColorCache);
+        Component sellComp = (totalSellValue != null && totalSellValue > 0) ? Component.text(CURRENCY_SYMBOL + numberFormat.format(totalSellValue)).color(sellColorCache) : Component.translatable("opsuchtmarkt.messages.noPrice").color(sellColorCache);
+        return Component.empty().append(buyComp).append(this.separatorComponent).append(sellComp);
       default:
         return Component.translatable("opsuchtmarkt.messages.noPrice");
     }
   }
 
   private void calculateInventoryValue() {
+    if (!isCalculating.compareAndSet(false, true)) {
+      return;
+    }
+
     executor.submit(() -> {
       try {
         if (labyAPI().minecraft() == null || labyAPI().minecraft().clientPlayer() == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
           return;
         }
-
         Inventory inventory = labyAPI().minecraft().clientPlayer().inventory();
         if (inventory == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
+          return;
+        }
+
+        JsonObject market = marketJsonCache.get();
+        if (market == null) {
+          currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, false));
           return;
         }
 
@@ -281,22 +268,17 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           if (itemStack == null || itemStack.isAir()) {
             continue;
           }
-
           String itemId = getItemIdFromIdentifier(itemStack);
-          if (itemId == null || itemId.isEmpty() || "unknown".equals(itemId)) {
+          if (itemId == null || itemId.isEmpty()) {
             continue;
           }
-
           int stackSize = getStackSize(itemStack);
           totalItems += stackSize;
-
-          PriceData priceData = getPriceDataForItem(itemId);
-
+          PriceData priceData = getPriceDataForItem(itemId, market);
           if (priceData == null) {
             allPricesLoaded = false;
             continue;
           }
-
           if (!priceData.isItemNotFound()) {
             if (priceData.getBuyPrice() != null) {
               totalBuyValue += priceData.getBuyPrice() * stackSize;
@@ -306,65 +288,73 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
             }
           }
         }
-
         currentInventoryValue.set(new InventoryValueData(totalItems, totalBuyValue, totalSellValue, allPricesLoaded));
-
       } catch (Throwable t) {
         currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
+      } finally {
+        isCalculating.set(false);
       }
     });
   }
 
-  private PriceData getPriceDataForItem(String itemId) {
+  private PriceData getPriceDataForItem(String itemId, JsonObject market) {
     CachedPriceData cached = priceCache.get(itemId);
     if (cached != null && System.currentTimeMillis() - cached.timestamp < PRICE_CACHE_DURATION_MS) {
       return cached.priceData;
     }
 
-    if (pendingRequests.putIfAbsent(itemId, Boolean.TRUE) == null) {
-      loadPriceDataFromAPI(itemId);
+    long now = System.currentTimeMillis();
+    if (market == null || now - marketCacheTimestamp > MARKET_CACHE_MS) {
+      if (pendingMarketRefresh.compareAndSet(false, true)) {
+        executor.submit(() -> {
+          try {
+            loadMarketJsonFromAPI();
+          } finally {
+            pendingMarketRefresh.set(false);
+          }
+        });
+      }
+      return null;
     }
 
-    return null;
+    try {
+      PriceData pd = findItemInCategories(market, itemId.toUpperCase(Locale.ROOT));
+      if (pd != null) {
+        priceCache.put(itemId, new CachedPriceData(pd, System.currentTimeMillis()));
+        return pd;
+      } else {
+        PriceData notFoundData = new PriceData(true, null, null);
+        priceCache.put(itemId, new CachedPriceData(notFoundData, System.currentTimeMillis()));
+        return notFoundData;
+      }
+    } catch (Exception e) {
+      return null;
+    }
   }
 
-  private void loadPriceDataFromAPI(String itemId) {
-    executor.submit(() -> {
-      try {
-        String apiUrl = "https://api.opsucht.net/market/prices";
-        String resp = httpGet(apiUrl);
-
-        if (resp != null && !resp.isEmpty()) {
-          JsonObject json = JsonParser.parseString(resp).getAsJsonObject();
-          PriceData priceData = findItemInCategories(json, itemId.toUpperCase(Locale.ROOT));
-
-          if (priceData != null) {
-            priceCache.put(itemId, new CachedPriceData(priceData, System.currentTimeMillis()));
-          } else {
-            PriceData notFoundData = new PriceData(true, null, null);
-            priceCache.put(itemId, new CachedPriceData(notFoundData, System.currentTimeMillis()));
-          }
-        } else {
-          PriceData errorData = new PriceData(false, null, null);
-          priceCache.put(itemId, new CachedPriceData(errorData, System.currentTimeMillis()));
-        }
-      } catch (Exception ex) {
-        PriceData errorData = new PriceData(false, null, null);
-        priceCache.put(itemId, new CachedPriceData(errorData, System.currentTimeMillis()));
-      } finally {
-        pendingRequests.remove(itemId);
-        calculateInventoryValue();
+  private void loadMarketJsonFromAPI() {
+    try {
+      String apiUrl = "https://api.opsucht.net/market/prices";
+      String resp = httpGet(apiUrl);
+      if (resp != null && !resp.isEmpty()) {
+        JsonObject json = JsonParser.parseString(resp).getAsJsonObject();
+        marketJsonCache.set(json);
+        marketCacheTimestamp = System.currentTimeMillis();
       }
-    });
+    } catch (Exception ex) {
+    }
   }
 
   private PriceData findItemInCategories(JsonObject categories, String itemId) {
-    for (String categoryName : categories.keySet()) {
-      JsonObject category = categories.getAsJsonObject(categoryName);
-      if (category.has(itemId)) {
-        JsonArray priceArray = category.getAsJsonArray(itemId);
-        return parsePriceDataFromArray(priceArray);
+    try {
+      for (String categoryName : categories.keySet()) {
+        JsonObject category = categories.getAsJsonObject(categoryName);
+        if (category.has(itemId)) {
+          JsonArray priceArray = category.getAsJsonArray(itemId);
+          return parsePriceDataFromArray(priceArray);
+        }
       }
+    } catch (Exception e) {
     }
     return null;
   }
@@ -373,22 +363,21 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     if (priceArray == null || priceArray.size() == 0) {
       return new PriceData(true, null, null);
     }
-
     Double buyPrice = null;
     Double sellPrice = null;
-
     for (JsonElement element : priceArray) {
-      JsonObject order = element.getAsJsonObject();
-      String orderSide = order.get("orderSide").getAsString();
-      double price = order.get("price").getAsDouble();
-
-      if ("BUY".equals(orderSide)) {
-        buyPrice = price;
-      } else if ("SELL".equals(orderSide)) {
-        sellPrice = price;
+      try {
+        JsonObject order = element.getAsJsonObject();
+        String orderSide = order.get("orderSide").getAsString();
+        double price = order.get("price").getAsDouble();
+        if ("BUY".equals(orderSide)) {
+          buyPrice = price;
+        } else if ("SELL".equals(orderSide)) {
+          sellPrice = price;
+        }
+      } catch (Exception e) {
       }
     }
-
     return new PriceData(false, buyPrice, sellPrice);
   }
 
@@ -408,7 +397,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
       }
     } catch (Exception e) {
     }
-    return "unknown";
+    return null;
   }
 
   private String httpGet(String urlStr) {
@@ -420,7 +409,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
       conn.setConnectTimeout(5000);
       conn.setReadTimeout(5000);
       conn.setRequestProperty("User-Agent", "LabyMod-OPSuchtMarkt/1.0");
-
       int code = conn.getResponseCode();
       if (code == 200) {
         BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
@@ -454,8 +442,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           t.setDaemon(true);
           return t;
         });
-        executor.scheduleAtFixedRate(this::cleanupOldCacheEntries,
-            CACHE_CLEANUP_INTERVAL_MS, CACHE_CLEANUP_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(this::cleanupOldCacheEntries, CACHE_CLEANUP_INTERVAL_MS, CACHE_CLEANUP_INTERVAL_MS, TimeUnit.MILLISECONDS);
       }
     }
   }
@@ -467,9 +454,13 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
       }
       executor = null;
       priceCache.clear();
-      pendingRequests.clear();
+      marketJsonCache.set(null);
+      marketCacheTimestamp = 0L;
       currentInventoryValue.set(null);
       lastDisplayedKey.set(null);
+      pendingMarketRefresh.set(false);
+      isCalculating.set(false);
+      marketDataLoaded.set(false);
     }
   }
 
@@ -482,14 +473,12 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     final double totalBuyValue;
     final double totalSellValue;
     final boolean calculationComplete;
-
     InventoryValueData(int totalItems, double totalBuyValue, double totalSellValue, boolean calculationComplete) {
       this.totalItems = totalItems;
       this.totalBuyValue = totalBuyValue;
       this.totalSellValue = totalSellValue;
       this.calculationComplete = calculationComplete;
     }
-
     @Override
     public int hashCode() {
       return Objects.hash(totalItems, totalBuyValue, totalSellValue, calculationComplete);
@@ -500,13 +489,11 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     final boolean itemNotFound;
     final Double buy;
     final Double sell;
-
     PriceData(boolean itemNotFound, Double buy, Double sell) {
       this.itemNotFound = itemNotFound;
       this.buy = buy;
       this.sell = sell;
     }
-
     boolean isItemNotFound() { return itemNotFound; }
     Double getBuyPrice() { return buy; }
     Double getSellPrice() { return sell; }
@@ -515,7 +502,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   private static class CachedPriceData {
     final PriceData priceData;
     final long timestamp;
-
     CachedPriceData(PriceData p, long ts) {
       this.priceData = p;
       this.timestamp = ts;

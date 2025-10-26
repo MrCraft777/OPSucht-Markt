@@ -10,7 +10,6 @@ import net.labymod.api.client.gui.hud.hudwidget.text.TextLine.State;
 import net.labymod.api.client.gui.icon.Icon;
 import net.labymod.api.client.resources.ResourceLocation;
 import net.craftportal.config.OPSuchtMarktConfig;
-import net.craftportal.config.OPSuchtMarktConfig.AuctionDisplayCount;
 import net.craftportal.config.OPSuchtMarktConfig.AuctionCategory;
 
 import com.google.gson.JsonArray;
@@ -28,10 +27,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
@@ -58,7 +59,11 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
   private final Component separatorComponent;
   private final Component noAuctionsComponent;
 
-  private boolean isFirstLoad = true;
+  private final AtomicBoolean isFirstLoad = new AtomicBoolean(true);
+  private final AtomicBoolean isLoading = new AtomicBoolean(false);
+
+  private String lastDisplayKey = null;
+  private final StringBuilder stringBuilder = new StringBuilder(64);
 
   public AuctionHouseWidget(HudWidgetCategory category, OPSuchtMarktConfig config) {
     super("auction_house");
@@ -101,7 +106,8 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     if (lastCategory != currentCategory) {
       lastCategory = currentCategory;
       currentAuctions.set(new ArrayList<>());
-      isFirstLoad = true;
+      isFirstLoad.set(true);
+      lastDisplayKey = null;
       stopExecutorIfRunning();
     }
 
@@ -128,8 +134,17 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
   private void updateDisplay() {
     List<AuctionData> auctions = currentAuctions.get();
+    boolean firstLoad = isFirstLoad.get();
+    int displayCount = config.auctionDisplayCount().get().getCount();
 
-    if (isFirstLoad && (auctions == null || auctions.isEmpty())) {
+    String currentKey = buildDisplayKey(auctions, firstLoad, displayCount);
+
+    if (Objects.equals(currentKey, lastDisplayKey)) {
+      return;
+    }
+    lastDisplayKey = currentKey;
+
+    if (firstLoad && (auctions == null || auctions.isEmpty())) {
       this.headerLine.updateAndFlush(this.loadingComponent);
       this.headerLine.setState(State.VISIBLE);
       hideAuctionLines();
@@ -149,9 +164,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
       return;
     }
 
-    int displayCount = config.auctionDisplayCount().get().getCount();
     int actualCount = Math.min(displayCount, auctions.size());
-
     ensureLineCount(actualCount);
 
     for (int i = 0; i < actualCount; i++) {
@@ -164,6 +177,29 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     for (int i = actualCount; i < auctionLines.size(); i++) {
       auctionLines.get(i).setState(State.HIDDEN);
     }
+  }
+
+  private String buildDisplayKey(List<AuctionData> auctions, boolean firstLoad, int displayCount) {
+    stringBuilder.setLength(0);
+    stringBuilder.append(firstLoad ? "1" : "0");
+    stringBuilder.append(':');
+    stringBuilder.append(displayCount);
+    stringBuilder.append(':');
+
+    if (auctions != null && !auctions.isEmpty()) {
+      int count = Math.min(displayCount, auctions.size());
+      for (int i = 0; i < count; i++) {
+        AuctionData auction = auctions.get(i);
+        stringBuilder.append(auction.hashCode());
+        if (i < count - 1) {
+          stringBuilder.append(',');
+        }
+      }
+    } else {
+      stringBuilder.append("empty");
+    }
+
+    return stringBuilder.toString();
   }
 
   private Component buildAuctionLine(AuctionData auction) {
@@ -195,19 +231,21 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     }
 
     String[] parts = material.toLowerCase(Locale.ROOT).split("_");
-    StringBuilder sb = new StringBuilder();
-    for (String part : parts) {
-      if (sb.length() > 0) {
-        sb.append(" ");
+    stringBuilder.setLength(0);
+
+    for (int i = 0; i < parts.length; i++) {
+      String part = parts[i];
+      if (i > 0) {
+        stringBuilder.append(" ");
       }
       if (part.length() >= 1) {
-        sb.append(part.substring(0, 1).toUpperCase(Locale.ROOT));
+        stringBuilder.append(Character.toUpperCase(part.charAt(0)));
         if (part.length() > 1) {
-          sb.append(part.substring(1));
+          stringBuilder.append(part.substring(1));
         }
       }
     }
-    return sb.toString();
+    return stringBuilder.toString();
   }
 
   private String formatTimeRemaining(String endTimeStr) {
@@ -245,8 +283,8 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
   }
 
   private void hideAuctionLines() {
-    for (TextLine line : auctionLines) {
-      line.setState(State.HIDDEN);
+    for (int i = 0; i < auctionLines.size(); i++) {
+      auctionLines.get(i).setState(State.HIDDEN);
     }
   }
 
@@ -273,10 +311,15 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         executor.shutdownNow();
       }
       executor = null;
+      isLoading.set(false);
     }
   }
 
   private void loadAuctions() {
+    if (!isLoading.compareAndSet(false, true)) {
+      return;
+    }
+
     try {
       AuctionCategory category = config.auctionCategory().get();
       String apiUrl;
@@ -293,7 +336,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         JsonElement element = JsonParser.parseString(resp);
 
         if (!element.isJsonArray()) {
-          isFirstLoad = false;
+          isFirstLoad.set(false);
           currentAuctions.set(new ArrayList<>());
           return;
         }
@@ -304,11 +347,12 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         int displayCount = config.auctionDisplayCount().get().getCount();
         int count = 0;
 
-        for (JsonElement elem : arr) {
+        for (int i = 0; i < arr.size(); i++) {
           if (count >= displayCount) {
             break;
           }
 
+          JsonElement elem = arr.get(i);
           if (!elem.isJsonObject()) {
             continue;
           }
@@ -337,15 +381,17 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
           }
         }
 
-        isFirstLoad = false;
+        isFirstLoad.set(false);
         currentAuctions.set(auctions);
       } else {
-        isFirstLoad = false;
+        isFirstLoad.set(false);
         currentAuctions.set(new ArrayList<>());
       }
     } catch (Exception e) {
-      isFirstLoad = false;
+      isFirstLoad.set(false);
       currentAuctions.set(new ArrayList<>());
+    } finally {
+      isLoading.set(false);
     }
   }
 
@@ -396,6 +442,23 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
       this.displayName = displayName;
       this.currentBid = currentBid;
       this.endTime = endTime;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(material, amount, displayName, currentBid, endTime);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) return true;
+      if (obj == null || getClass() != obj.getClass()) return false;
+      AuctionData other = (AuctionData) obj;
+      return amount == other.amount &&
+          Double.compare(other.currentBid, currentBid) == 0 &&
+          Objects.equals(material, other.material) &&
+          Objects.equals(displayName, other.displayName) &&
+          Objects.equals(endTime, other.endTime);
     }
   }
 }
