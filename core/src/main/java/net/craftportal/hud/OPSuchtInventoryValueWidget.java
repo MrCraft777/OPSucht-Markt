@@ -338,6 +338,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         marketCacheTimestamp = System.currentTimeMillis();
       }
     } catch (Exception ex) {
+      //
     }
   }
 
@@ -351,6 +352,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         }
       }
     } catch (Exception e) {
+      //
     }
     return null;
   }
@@ -372,6 +374,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           sellPrice = price;
         }
       } catch (Exception e) {
+        //
       }
     }
     return new PriceData(false, buyPrice, sellPrice);
@@ -392,6 +395,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         return loc.getPath().toUpperCase(Locale.ROOT);
       }
     } catch (Exception e) {
+      //
     }
     return null;
   }
@@ -417,6 +421,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         return sb.toString();
       }
     } catch (Exception e) {
+      //
     } finally {
       if (conn != null) {
         conn.disconnect();
