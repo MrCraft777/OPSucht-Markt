@@ -10,7 +10,10 @@
   "opsuchtmarkt": {
     "settings": {
       "displayMode": {
-        "name": "Stelle ein, ob nur der Verkaufspreis, der Kaufpreis oder beide sichtbar sein sollen."
+        "name": "Stelle ein, ob nur der Verkaufspreis, der Kaufpreis oder beide sichtbar sein sollen.",
+        "buy": "Nur Kaufpreis",
+        "sell": "Nur Verkaufspreis",
+        "both": "Beide Preise"
       },
       "enabled": {
         "name": "Aktiviert"
@@ -29,12 +32,30 @@
       },
       "sellColor": {
         "name": "Verkaufspreis Farbe"
+      },
+      "auctionDisplayCount": {
+        "name": "Anzahl der Auktionen",
+        "five": "5 Auktionen",
+        "ten": "10 Auktionen",
+        "fifteen": "15 Auktionen"
+      },
+      "auctionCategory": {
+        "name": "Auktionskategorie",
+        "top": "Top Auktionen",
+        "blocks": "Blöcke",
+        "items": "Items",
+        "customItems": "Custom Items",
+        "opItems": "OP Items",
+        "spawner": "Spawner"
       }
     },
     "hudWidget": {
+      "auction_house": {
+        "name": "Auktionshaus"
+      },
       "inventory_widget": {
         "name": "Inventarwert"
-        },
+      },
       "item_price": {
         "name": "Preis"
       },
@@ -48,23 +69,22 @@
         "name": "Spielerrekord von OPSUCHT"
       }
     },
+    "auction": {
+      "noAuctions": "Keine aktiven Auktionen"
+    },
     "messages": {
       "loading": "Lädt...",
       "noItem": "Kein Item",
       "calculating": "Berechnen...",
-      "noPrice": "Item hat keinen Preis",
+      "noPrice": "Kein Preis",
       "items": "Items",
       "unknown": "Unbekannt"
     },
     "prices": {
-      "noPrice": "Item hat keinen Preis",
+      "noPrice": "Kein Preis",
+      "noBuyPrice": "$0",
       "noSellPrice": "$0"
     },
-    "currencySymbol": "$",
-    "displayMode": {
-      "buy": "Nur Kaufpreis",
-      "sell": "Nur Verkaufspreis",
-      "both": "Beide Preise"
-    }
+    "currencySymbol": "$"
   }
 }

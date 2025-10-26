@@ -32,6 +32,12 @@ public class OPSuchtMarktConfig extends AddonConfig {
   @ColorPickerSetting
   private final ConfigProperty<Color> sellColor = ConfigProperty.create(Color.ofRGB(255, 85, 85));
 
+  @DropdownSetting
+  private final ConfigProperty<AuctionDisplayCount> auctionDisplayCount = ConfigProperty.createEnum(AuctionDisplayCount.TEN);
+
+  @DropdownSetting
+  private final ConfigProperty<AuctionCategory> auctionCategory = ConfigProperty.createEnum(AuctionCategory.TOP);
+
   @Override
   public ConfigProperty<Boolean> enabled() {
     return enabled;
@@ -61,6 +67,14 @@ public class OPSuchtMarktConfig extends AddonConfig {
     return sellColor;
   }
 
+  public ConfigProperty<AuctionDisplayCount> auctionDisplayCount() {
+    return auctionDisplayCount;
+  }
+
+  public ConfigProperty<AuctionCategory> auctionCategory() {
+    return auctionCategory;
+  }
+
   public enum DisplayMode {
     BUY("opsuchtmarkt.settings.displayMode.buy"),
     SELL("opsuchtmarkt.settings.displayMode.sell"),
@@ -74,6 +88,53 @@ public class OPSuchtMarktConfig extends AddonConfig {
 
     public String getTranslationKey() {
       return translationKey;
+    }
+  }
+
+  public enum AuctionDisplayCount {
+    FIVE("opsuchtmarkt.settings.auctionDisplayCount.five", 5),
+    TEN("opsuchtmarkt.settings.auctionDisplayCount.ten", 10),
+    FIFTEEN("opsuchtmarkt.settings.auctionDisplayCount.fifteen", 15);
+
+    private final String translationKey;
+    private final int count;
+
+    AuctionDisplayCount(String translationKey, int count) {
+      this.translationKey = translationKey;
+      this.count = count;
+    }
+
+    public String getTranslationKey() {
+      return translationKey;
+    }
+
+    public int getCount() {
+      return count;
+    }
+  }
+
+  public enum AuctionCategory {
+    TOP("opsuchtmarkt.settings.auctionCategory.top", null),
+    BLOCKS("opsuchtmarkt.settings.auctionCategory.blocks", "blocks"),
+    ITEMS("opsuchtmarkt.settings.auctionCategory.items", "items"),
+    CUSTOM_ITEMS("opsuchtmarkt.settings.auctionCategory.customItems", "custom_items"),
+    OP_ITEMS("opsuchtmarkt.settings.auctionCategory.opItems", "op_items"),
+    SPAWNER("opsuchtmarkt.settings.auctionCategory.spawner", "spawner");
+
+    private final String translationKey;
+    private final String apiValue;
+
+    AuctionCategory(String translationKey, String apiValue) {
+      this.translationKey = translationKey;
+      this.apiValue = apiValue;
+    }
+
+    public String getTranslationKey() {
+      return translationKey;
+    }
+
+    public String getApiValue() {
+      return apiValue;
     }
   }
 }
