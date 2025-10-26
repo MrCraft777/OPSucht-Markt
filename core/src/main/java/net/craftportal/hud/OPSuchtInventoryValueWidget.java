@@ -20,7 +20,7 @@ import com.google.gson.JsonParser;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.text.NumberFormat;
 import java.util.Locale;
 import java.util.Objects;
@@ -66,8 +66,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   private final NumberFormat numberFormat;
 
   private static final String CURRENCY_SYMBOL = "$";
-
-  private boolean isEditorMode = false;
 
   private final AtomicReference<JsonObject> marketJsonCache = new AtomicReference<>(null);
   private volatile long marketCacheTimestamp = 0L;
@@ -142,12 +140,10 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   public void onTick(boolean isEditorContext) {
     updateColorCacheIfNeeded();
     if (isEditorContext) {
-      isEditorMode = true;
       this.valueLine.updateAndFlush(this.loadingComponent);
       this.valueLine.setState(State.VISIBLE);
       return;
     }
-    isEditorMode = false;
     if (this.config == null || !this.config.enabled().get()) {
       this.valueLine.setState(State.HIDDEN);
       stopExecutorIfRunning();
@@ -242,11 +238,11 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
 
     executor.submit(() -> {
       try {
-        if (labyAPI().minecraft() == null || labyAPI().minecraft().clientPlayer() == null) {
+        if (labyAPI().minecraft() == null || labyAPI().minecraft().getClientPlayer() == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
           return;
         }
-        Inventory inventory = labyAPI().minecraft().clientPlayer().inventory();
+        Inventory inventory = labyAPI().minecraft().getClientPlayer().inventory();
         if (inventory == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
           return;
@@ -360,7 +356,7 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   }
 
   private PriceData parsePriceDataFromArray(JsonArray priceArray) {
-    if (priceArray == null || priceArray.size() == 0) {
+    if (priceArray == null || priceArray.isEmpty()) {
       return new PriceData(true, null, null);
     }
     Double buyPrice = null;
@@ -403,8 +399,8 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   private String httpGet(String urlStr) {
     HttpURLConnection conn = null;
     try {
-      URL url = new URL(urlStr);
-      conn = (HttpURLConnection) url.openConnection();
+      URI uri = URI.create(urlStr);
+      conn = (HttpURLConnection) uri.toURL().openConnection();
       conn.setRequestMethod("GET");
       conn.setConnectTimeout(5000);
       conn.setReadTimeout(5000);
@@ -462,10 +458,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
       isCalculating.set(false);
       marketDataLoaded.set(false);
     }
-  }
-
-  public void shutdown() {
-    stopExecutorIfRunning();
   }
 
   private static class InventoryValueData {
