@@ -429,10 +429,6 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     return null;
   }
 
-  public void shutdown() {
-    stopExecutorIfRunning();
-  }
-
   private static class AuctionData {
     final String material;
     final int amount;
