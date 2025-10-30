@@ -36,7 +36,6 @@ import static net.labymod.api.Laby.labyAPI;
 public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
 
   private final AtomicReference<ItemData> currentItem = new AtomicReference<>(null);
-  private final AtomicReference<PriceData> currentPriceData = new AtomicReference<>(null);
   private final AtomicReference<String> lastDisplayedKey = new AtomicReference<>(null);
 
   private TextLine nameLine;
@@ -74,6 +73,8 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
   private final ConcurrentHashMap<String, Component> itemNameCache = new ConcurrentHashMap<>();
 
   private boolean isEditorMode = false;
+
+  private volatile boolean needsDisplayUpdate = false;
 
   public OPSuchtMarktWidgets(HudWidgetCategory category, OPSuchtMarktConfig config) {
     super("opsucht_item_price");
@@ -173,7 +174,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
 
   private void updateDisplay() {
     ItemData itemData = currentItem.get();
-    PriceData priceData = currentPriceData.get();
 
     String itemId = itemData != null ? itemData.id : null;
     int stackSize = itemData != null ? itemData.stackSize : 0;
@@ -185,43 +185,38 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
     String key = (itemId == null ? "null" : itemId) + ":" + stackSize + ":" + currentDisplayMode.name() + ":" + currentShowItemName + ":" + currentUseStackSize;
     String previousKey = lastDisplayedKey.get();
 
-    if (Objects.equals(key, previousKey)) {
+    if (Objects.equals(key, previousKey) && !needsDisplayUpdate) {
       return;
     }
 
-    Component displayText = buildDisplayText(itemData, priceData, currentDisplayMode, currentShowItemName, currentUseStackSize);
+    Component displayText = buildDisplayText(itemData, currentDisplayMode, currentShowItemName, currentUseStackSize);
     this.nameLine.updateAndFlush(displayText);
     this.nameLine.setState(State.VISIBLE);
 
     lastDisplayedKey.set(key);
+    needsDisplayUpdate = false;
   }
 
-  private Component buildDisplayText(ItemData itemData, PriceData priceData, DisplayMode displayMode, boolean showItemName, boolean useStackSize) {
+  private Component buildDisplayText(ItemData itemData, DisplayMode displayMode, boolean showItemName, boolean useStackSize) {
     if (itemData == null || itemData.id == null || itemData.id.isEmpty() || "unknown".equals(itemData.id)) {
       return this.noItemComponent;
     }
 
     Component displayNameComp = formatItemIdComponent(itemData.id);
 
-    if (priceData == null) {
-      CachedPriceData cached = priceCache.get(itemData.id);
-      if (cached != null && System.currentTimeMillis() - cached.timestamp < PRICE_CACHE_DURATION_MS) {
-        PriceData freshPriceData = cached.priceData;
-        Component priceText = createPriceText(freshPriceData.getBuyPrice(), freshPriceData.getSellPrice(),
+    CachedPriceData cached = priceCache.get(itemData.id);
+    if (cached != null && System.currentTimeMillis() - cached.timestamp < PRICE_CACHE_DURATION_MS) {
+      PriceData priceData = cached.priceData;
+      if (priceData.isItemNotFound()) {
+        return Component.translatable("opsuchtmarkt.prices.noPrice");
+      } else {
+        Component priceText = createPriceText(priceData.getBuyPrice(), priceData.getSellPrice(),
             itemData.stackSize, useStackSize);
         return createDisplayText(displayNameComp, priceText, itemData.stackSize, useStackSize, showItemName);
-      } else {
-        return this.loadingComponent;
       }
     }
 
-    if (priceData.isItemNotFound()) {
-      return Component.translatable("opsuchtmarkt.prices.noPrice");
-    } else {
-      Component priceText = createPriceText(priceData.getBuyPrice(), priceData.getSellPrice(),
-          itemData.stackSize, useStackSize);
-      return createDisplayText(displayNameComp, priceText, itemData.stackSize, useStackSize, showItemName);
-    }
+    return this.loadingComponent;
   }
 
   private Component createDisplayText(Component displayNameComp, Component priceText, int stackSize, boolean useStackSize, boolean showItemName) {
@@ -310,7 +305,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
   private void loadPriceData(String itemId) {
     CachedPriceData cached = priceCache.get(itemId);
     if (cached != null && System.currentTimeMillis() - cached.timestamp < PRICE_CACHE_DURATION_MS) {
-      currentPriceData.set(cached.priceData);
       return;
     }
 
@@ -318,7 +312,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
       return;
     }
 
-    currentPriceData.set(null);
     updatePriceFromAPI(itemId);
   }
 
@@ -374,7 +367,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
           JsonArray arr = json.getAsJsonArray(itemId.toUpperCase(Locale.ROOT));
           if (arr == null || arr.size() == 0) {
             PriceData pd = new PriceData(true, null, null);
-            currentPriceData.set(pd);
             priceCache.put(itemId, new CachedPriceData(pd, System.currentTimeMillis()));
           } else {
             Double buy = null, sell = null;
@@ -386,16 +378,18 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
               else if ("SELL".equals(side)) sell = p;
             }
             PriceData pd = new PriceData(false, buy, sell);
-            currentPriceData.set(pd);
             priceCache.put(itemId, new CachedPriceData(pd, System.currentTimeMillis()));
           }
+          needsDisplayUpdate = true;
         } else {
           PriceData pd = new PriceData(false, null, null);
-          currentPriceData.set(pd);
+          priceCache.put(itemId, new CachedPriceData(pd, System.currentTimeMillis()));
+          needsDisplayUpdate = true;
         }
       } catch (Exception ex) {
         PriceData pd = new PriceData(false, null, null);
-        currentPriceData.set(pd);
+        priceCache.put(itemId, new CachedPriceData(pd, System.currentTimeMillis()));
+        needsDisplayUpdate = true;
       } finally {
         pendingRequests.remove(itemId);
       }
@@ -458,7 +452,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
       priceCache.clear();
       itemNameCache.clear();
       pendingRequests.clear();
-      currentPriceData.set(null);
       lastDisplayedKey.set(null);
     }
   }

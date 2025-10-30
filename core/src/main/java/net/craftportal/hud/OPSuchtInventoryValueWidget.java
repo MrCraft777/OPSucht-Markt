@@ -29,7 +29,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicBoolean;
 import static net.labymod.api.Laby.labyAPI;
 
 public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConfig> {
@@ -70,9 +69,10 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   private final AtomicReference<JsonObject> marketJsonCache = new AtomicReference<>(null);
   private volatile long marketCacheTimestamp = 0L;
   private static final long MARKET_CACHE_MS = 30000;
-  private final AtomicBoolean pendingMarketRefresh = new AtomicBoolean(false);
-  private final AtomicBoolean isCalculating = new AtomicBoolean(false);
-  private final AtomicBoolean marketDataLoaded = new AtomicBoolean(false);
+  private volatile boolean pendingMarketRefresh = false;
+  private volatile boolean isCalculating = false;
+  private volatile boolean marketDataLoaded = false;
+  private volatile boolean needsDisplayUpdate = false;
 
   public OPSuchtInventoryValueWidget(HudWidgetCategory category, OPSuchtMarktConfig config) {
     super("inventory_widget");
@@ -84,7 +84,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     try {
       this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt", "textures/inventory_value_widget.png")));
     } catch (Throwable t) {
-      //
     }
     this.numberFormat = initializeNumberFormat();
     initializeColorCache();
@@ -152,19 +151,20 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     }
     ensureExecutorRunning();
 
-    if (!marketDataLoaded.get() && marketJsonCache.get() == null && pendingMarketRefresh.compareAndSet(false, true)) {
+    if (!marketDataLoaded && marketJsonCache.get() == null && !pendingMarketRefresh) {
+      pendingMarketRefresh = true;
       executor.submit(() -> {
         try {
           loadMarketJsonFromAPI();
-          marketDataLoaded.set(true);
+          marketDataLoaded = true;
         } finally {
-          pendingMarketRefresh.set(false);
+          pendingMarketRefresh = false;
         }
       });
     }
 
     long now = System.currentTimeMillis();
-    if (now - lastInventoryCheck > INVENTORY_CHECK_INTERVAL_MS && !isCalculating.get()) {
+    if (now - lastInventoryCheck > INVENTORY_CHECK_INTERVAL_MS && !isCalculating) {
       lastInventoryCheck = now;
       calculateInventoryValue();
     }
@@ -177,17 +177,18 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
     boolean currentShowItemCount = this.config.showItemCount().get();
     String key = (valueData != null ? valueData.hashCode() : "null") + ":" + currentDisplayMode.name() + ":" + currentShowItemCount + ":" + lastBuyColor + ":" + lastSellColor;
     String previousKey = lastDisplayedKey.get();
-    if (Objects.equals(key, previousKey)) {
+    if (Objects.equals(key, previousKey) && !needsDisplayUpdate) {
       return;
     }
     Component displayText = buildDisplayText(valueData, currentDisplayMode);
     this.valueLine.updateAndFlush(displayText);
     this.valueLine.setState(State.VISIBLE);
     lastDisplayedKey.set(key);
+    needsDisplayUpdate = false;
   }
 
   private Component buildDisplayText(InventoryValueData valueData, DisplayMode displayMode) {
-    if (!marketDataLoaded.get() && marketJsonCache.get() == null) {
+    if (!marketDataLoaded && marketJsonCache.get() == null) {
       return this.loadingComponent;
     }
 
@@ -233,25 +234,29 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
   }
 
   private void calculateInventoryValue() {
-    if (!isCalculating.compareAndSet(false, true)) {
+    if (isCalculating) {
       return;
     }
+    isCalculating = true;
 
     executor.submit(() -> {
       try {
         if (labyAPI().minecraft() == null || labyAPI().minecraft().getClientPlayer() == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
+          needsDisplayUpdate = true;
           return;
         }
         Inventory inventory = labyAPI().minecraft().getClientPlayer().inventory();
         if (inventory == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
+          needsDisplayUpdate = true;
           return;
         }
 
         JsonObject market = marketJsonCache.get();
         if (market == null) {
           currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, false));
+          needsDisplayUpdate = true;
           return;
         }
 
@@ -286,10 +291,12 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           }
         }
         currentInventoryValue.set(new InventoryValueData(totalItems, totalBuyValue, totalSellValue, allPricesLoaded));
+        needsDisplayUpdate = true;
       } catch (Throwable t) {
         currentInventoryValue.set(new InventoryValueData(0, 0.0, 0.0, true));
+        needsDisplayUpdate = true;
       } finally {
-        isCalculating.set(false);
+        isCalculating = false;
       }
     });
   }
@@ -302,12 +309,13 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
 
     long now = System.currentTimeMillis();
     if (market == null || now - marketCacheTimestamp > MARKET_CACHE_MS) {
-      if (pendingMarketRefresh.compareAndSet(false, true)) {
+      if (!pendingMarketRefresh) {
+        pendingMarketRefresh = true;
         executor.submit(() -> {
           try {
             loadMarketJsonFromAPI();
           } finally {
-            pendingMarketRefresh.set(false);
+            pendingMarketRefresh = false;
           }
         });
       }
@@ -337,9 +345,9 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         JsonObject json = JsonParser.parseString(resp).getAsJsonObject();
         marketJsonCache.set(json);
         marketCacheTimestamp = System.currentTimeMillis();
+        needsDisplayUpdate = true;
       }
     } catch (Exception ex) {
-      //
     }
   }
 
@@ -353,7 +361,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         }
       }
     } catch (Exception e) {
-      //
     }
     return null;
   }
@@ -375,7 +382,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
           sellPrice = price;
         }
       } catch (Exception e) {
-        //
       }
     }
     return new PriceData(false, buyPrice, sellPrice);
@@ -396,7 +402,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         return loc.getPath().toUpperCase(Locale.ROOT);
       }
     } catch (Exception e) {
-      //
     }
     return null;
   }
@@ -422,7 +427,6 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
         return sb.toString();
       }
     } catch (Exception e) {
-      //
     } finally {
       if (conn != null) {
         conn.disconnect();
@@ -460,9 +464,10 @@ public class OPSuchtInventoryValueWidget extends TextHudWidget<TextHudWidgetConf
       marketCacheTimestamp = 0L;
       currentInventoryValue.set(null);
       lastDisplayedKey.set(null);
-      pendingMarketRefresh.set(false);
-      isCalculating.set(false);
-      marketDataLoaded.set(false);
+      pendingMarketRefresh = false;
+      isCalculating = false;
+      marketDataLoaded = false;
+      needsDisplayUpdate = false;
     }
   }
 
