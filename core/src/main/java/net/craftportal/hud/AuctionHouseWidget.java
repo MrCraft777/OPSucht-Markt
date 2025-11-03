@@ -1,5 +1,9 @@
 package net.craftportal.hud;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import java.io.IOException;
+import java.lang.reflect.Type;
 import net.labymod.api.client.component.Component;
 import net.labymod.api.client.component.format.TextColor;
 import net.labymod.api.client.gui.hud.binding.category.HudWidgetCategory;
@@ -12,15 +16,10 @@ import net.labymod.api.client.resources.ResourceLocation;
 import net.craftportal.config.OPSuchtMarktConfig;
 import net.craftportal.config.OPSuchtMarktConfig.AuctionCategory;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.text.NumberFormat;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,18 +31,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
-  private final AtomicReference<List<AuctionData>> currentAuctions = new AtomicReference<>(new ArrayList<>());
+  private final AtomicReference<List<AuctionData>> currentAuctions = new AtomicReference<>(null);
+  private List<AuctionData> lastDisplayedAuctions = null;
+  private int lastDisplayedCount = -1;
+
   private final List<TextLine> auctionLines = new ArrayList<>();
 
   private ScheduledExecutorService executor = null;
   private final Object executorLock = new Object();
 
   private static final long UPDATE_INTERVAL_MS = 15000;
-  private static final String CURRENCY_SYMBOL = "$";
   private static final TextColor TIME_COLOR = TextColor.color(170, 170, 170);
   private static final TextColor PRICE_COLOR = TextColor.color(85, 255, 85);
   private static final TextColor SEPARATOR_COLOR = TextColor.color(170, 170, 170);
@@ -58,12 +58,12 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
   private final Component headerComponent;
   private final Component separatorComponent;
   private final Component noAuctionsComponent;
+  private final Component unknownComponent;
+  private final Component currencyComponent;
 
-  private final AtomicBoolean isFirstLoad = new AtomicBoolean(true);
-  private final AtomicBoolean isLoading = new AtomicBoolean(false);
-
-  private String lastDisplayKey = null;
-  private final StringBuilder stringBuilder = new StringBuilder(64);
+  private final HttpClient httpClient;
+  private final Gson gson = new Gson();
+  private final Type auctionListType = new TypeToken<List<AuctionResponse>>() {}.getType();
 
   public AuctionHouseWidget(HudWidgetCategory category, OPSuchtMarktConfig config) {
     super("auction_house");
@@ -73,6 +73,13 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     this.headerComponent = Component.translatable("opsuchtmarkt.hudWidget.auction_house.name");
     this.separatorComponent = Component.text(" - ").color(SEPARATOR_COLOR);
     this.noAuctionsComponent = Component.translatable("opsuchtmarkt.auction.noAuctions");
+    this.unknownComponent = Component.translatable("opsuchtmarkt.messages.unknown");
+    this.currencyComponent = Component.translatable("opsuchtmarkt.currencySymbol");
+
+    this.httpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(5))
+        .build();
 
     try {
       this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt",
@@ -105,9 +112,8 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     AuctionCategory currentCategory = this.config.auctionCategory().get();
     if (lastCategory != currentCategory) {
       lastCategory = currentCategory;
-      currentAuctions.set(new ArrayList<>());
-      isFirstLoad.set(true);
-      lastDisplayKey = null;
+      currentAuctions.set(null);
+      lastDisplayedAuctions = null;
       stopExecutorIfRunning();
     }
 
@@ -136,17 +142,15 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
 
   private void updateDisplay() {
     List<AuctionData> auctions = currentAuctions.get();
-    boolean firstLoad = isFirstLoad.get();
     int displayCount = config.auctionDisplayCount().get().getCount();
 
-    String currentKey = buildDisplayKey(auctions, firstLoad, displayCount);
-
-    if (Objects.equals(currentKey, lastDisplayKey)) {
+    if (auctions == lastDisplayedAuctions && displayCount == lastDisplayedCount) {
       return;
     }
-    lastDisplayKey = currentKey;
+    lastDisplayedAuctions = auctions;
+    lastDisplayedCount = displayCount;
 
-    if (firstLoad && (auctions == null || auctions.isEmpty())) {
+    if (auctions == null) {
       this.headerLine.updateAndFlush(this.loadingComponent);
       this.headerLine.setState(State.VISIBLE);
       hideAuctionLines();
@@ -156,7 +160,7 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     this.headerLine.updateAndFlush(this.headerComponent);
     this.headerLine.setState(State.VISIBLE);
 
-    if (auctions == null || auctions.isEmpty()) {
+    if (auctions.isEmpty()) {
       ensureLineCount(1);
       TextLine firstLine = auctionLines.get(0);
       firstLine.updateAndFlush(this.noAuctionsComponent);
@@ -183,73 +187,53 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
     }
   }
 
-  private String buildDisplayKey(List<AuctionData> auctions, boolean firstLoad, int displayCount) {
-    stringBuilder.setLength(0);
-    stringBuilder.append(firstLoad ? "1" : "0");
-    stringBuilder.append(':');
-    stringBuilder.append(displayCount);
-    stringBuilder.append(':');
-
-    if (auctions != null && !auctions.isEmpty()) {
-      int count = Math.min(displayCount, auctions.size());
-      for (int i = 0; i < count; i++) {
-        AuctionData auction = auctions.get(i);
-        stringBuilder.append(auction.hashCode());
-        if (i < count - 1) {
-          stringBuilder.append(',');
-        }
-      }
-    } else {
-      stringBuilder.append("empty");
-    }
-
-    return stringBuilder.toString();
-  }
-
   private Component buildAuctionLine(AuctionData auction) {
-    String itemName = auction.displayName != null && !auction.displayName.isEmpty()
-        ? auction.displayName
-        : formatMaterialName(auction.material);
-
-    String priceStr = CURRENCY_SYMBOL + numberFormat.format(auction.currentBid);
-    String timeStr = formatTimeRemaining(auction.endTime);
-
-    Component nameComp = Component.text(itemName);
-    if (auction.amount > 1) {
-      nameComp = Component.empty()
-          .append(nameComp)
-          .append(Component.text(" x" + auction.amount));
+    Component nameComp;
+    if (auction.displayName != null && !auction.displayName.isEmpty()) {
+      nameComp = Component.text(auction.displayName);
+    } else if (auction.material != null && !auction.material.isEmpty()) {
+      nameComp = Component.text(formatMaterialName(auction.material));
+    } else {
+      nameComp = this.unknownComponent;
     }
+
+    if (auction.amount > 1) {
+      nameComp = nameComp.append(Component.text(" x" + auction.amount));
+    }
+
+    Component priceComp = Component.empty()
+        .append(this.currencyComponent)
+        .append(Component.text(numberFormat.format(auction.currentBid)))
+        .color(PRICE_COLOR);
+
+    String timeStr = formatTimeRemaining(auction.endTime);
+    Component timeComp = Component.text(timeStr).color(TIME_COLOR);
 
     return Component.empty()
         .append(nameComp)
         .append(this.separatorComponent)
-        .append(Component.text(priceStr).color(PRICE_COLOR))
+        .append(priceComp)
         .append(this.separatorComponent)
-        .append(Component.text(timeStr).color(TIME_COLOR));
+        .append(timeComp);
   }
 
   private String formatMaterialName(String material) {
-    if (material == null || material.isEmpty()) {
-      return "Unknown";
-    }
-
     String[] parts = material.toLowerCase(Locale.ROOT).split("_");
-    stringBuilder.setLength(0);
+    StringBuilder localBuilder = new StringBuilder(64);
 
     for (int i = 0; i < parts.length; i++) {
       String part = parts[i];
       if (i > 0) {
-        stringBuilder.append(" ");
+        localBuilder.append(" ");
       }
       if (!part.isEmpty()) {
-        stringBuilder.append(Character.toUpperCase(part.charAt(0)));
+        localBuilder.append(Character.toUpperCase(part.charAt(0)));
         if (part.length() > 1) {
-          stringBuilder.append(part.substring(1));
+          localBuilder.append(part.substring(1));
         }
       }
     }
-    return stringBuilder.toString();
+    return localBuilder.toString();
   }
 
   private String formatTimeRemaining(String endTimeStr) {
@@ -315,118 +299,77 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
         executor.shutdownNow();
       }
       executor = null;
-      isLoading.set(false);
     }
   }
 
   private void loadAuctions() {
-    if (!isLoading.compareAndSet(false, true)) {
-      return;
-    }
-
     try {
       AuctionCategory category = config.auctionCategory().get();
-      String apiUrl;
-
-      if (category == AuctionCategory.TOP) {
-        apiUrl = "https://api.opsucht.net/auctions/active";
-      } else {
-        apiUrl = "https://api.opsucht.net/auctions/categories/" + category.getApiValue();
-      }
+      String apiUrl = (category == AuctionCategory.TOP)
+          ? "https://api.opsucht.net/auctions/active"
+          : "https://api.opsucht.net/auctions/categories/" + category.getApiValue();
 
       String resp = httpGet(apiUrl);
 
-      if (resp != null && !resp.isEmpty()) {
-        JsonElement element = JsonParser.parseString(resp);
-
-        if (!element.isJsonArray()) {
-          isFirstLoad.set(false);
-          currentAuctions.set(new ArrayList<>());
-          return;
-        }
-
-        JsonArray arr = element.getAsJsonArray();
-        List<AuctionData> auctions = new ArrayList<>();
-
-        int displayCount = config.auctionDisplayCount().get().getCount();
-        int count = 0;
-
-        for (int i = 0; i < arr.size(); i++) {
-          if (count >= displayCount) {
-            break;
-          }
-
-          JsonElement elem = arr.get(i);
-          if (!elem.isJsonObject()) {
-            continue;
-          }
-
-          try {
-            JsonObject obj = elem.getAsJsonObject();
-
-            if (!obj.has("item") || !obj.get("item").isJsonObject()) {
-              continue;
-            }
-
-            JsonObject item = obj.getAsJsonObject("item");
-
-            String material = item.has("material") ? item.get("material").getAsString() : null;
-            int amount = item.has("amount") ? item.get("amount").getAsInt() : 1;
-            String displayName = item.has("displayName") ? item.get("displayName").getAsString() : null;
-
-            double currentBid = obj.has("currentBid") ? obj.get("currentBid").getAsDouble() : 0;
-            String endTime = obj.has("endTime") ? obj.get("endTime").getAsString() : null;
-
-            if (material != null && endTime != null) {
-              auctions.add(new AuctionData(material, amount, displayName, currentBid, endTime));
-              count++;
-            }
-          } catch (Exception ignored) {
-          }
-        }
-
-        isFirstLoad.set(false);
-        currentAuctions.set(auctions);
-      } else {
-        isFirstLoad.set(false);
+      if (resp == null || resp.isEmpty()) {
         currentAuctions.set(new ArrayList<>());
+        return;
       }
-    } catch (Exception ignored) {
-      isFirstLoad.set(false);
+
+      List<AuctionResponse> responses = gson.fromJson(resp, auctionListType);
+      if (responses == null) {
+        currentAuctions.set(new ArrayList<>());
+        return;
+      }
+
+      List<AuctionData> auctions = new ArrayList<>();
+      int displayCount = config.auctionDisplayCount().get().getCount();
+
+      for (AuctionResponse res : responses) {
+        if (auctions.size() >= displayCount) {
+          break;
+        }
+
+        if (res.item != null && res.item.material != null && res.endTime != null) {
+          auctions.add(new AuctionData(
+              res.item.material,
+              res.item.amount,
+              res.item.displayName,
+              res.currentBid,
+              res.endTime
+          ));
+        }
+      }
+      currentAuctions.set(auctions);
+
+    } catch (Exception e) {
       currentAuctions.set(new ArrayList<>());
-    } finally {
-      isLoading.set(false);
     }
   }
 
-  private String httpGet(String urlStr) {
-    HttpURLConnection conn = null;
-    try {
-      URI uri = URI.create(urlStr);
-      conn = (HttpURLConnection) uri.toURL().openConnection();
-      conn.setRequestMethod("GET");
-      conn.setConnectTimeout(5000);
-      conn.setReadTimeout(5000);
-      conn.setRequestProperty("User-Agent", "LabyMod-OPSuchtMarkt/1.0");
+  private String httpGet(String urlStr) throws IOException, InterruptedException {
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(urlStr))
+        .timeout(Duration.ofSeconds(5))
+        .header("User-Agent", "LabyMod-OPSuchtMarkt/1.0")
+        .GET()
+        .build();
 
-      int code = conn.getResponseCode();
-      if (code == 200) {
-        BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) {
-          sb.append(line);
-        }
-        br.close();
-        return sb.toString();
-      }
-    } catch (Exception ignored) {
-    } finally {
-      if (conn != null) {
-        conn.disconnect();
-      }
-    }
-    return null;
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+    return (response.statusCode() == 200) ? response.body() : null;
+  }
+
+  private static class AuctionItem {
+    String material;
+    int amount = 1;
+    String displayName;
+  }
+
+  private static class AuctionResponse {
+    AuctionItem item;
+    double currentBid;
+    String endTime;
   }
 
   private static class AuctionData {
@@ -442,23 +385,6 @@ public class AuctionHouseWidget extends TextHudWidget<TextHudWidgetConfig> {
       this.displayName = displayName;
       this.currentBid = currentBid;
       this.endTime = endTime;
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(material, amount, displayName, currentBid, endTime);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (this == obj) return true;
-      if (obj == null || getClass() != obj.getClass()) return false;
-      AuctionData other = (AuctionData) obj;
-      return amount == other.amount &&
-          Double.compare(other.currentBid, currentBid) == 0 &&
-          Objects.equals(material, other.material) &&
-          Objects.equals(displayName, other.displayName) &&
-          Objects.equals(endTime, other.endTime);
     }
   }
 }

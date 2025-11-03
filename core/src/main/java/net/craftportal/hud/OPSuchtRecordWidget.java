@@ -1,5 +1,7 @@
 package net.craftportal.hud;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import net.labymod.api.client.component.Component;
 import net.labymod.api.client.gui.hud.binding.category.HudWidgetCategory;
 import net.labymod.api.client.gui.hud.hudwidget.text.TextHudWidget;
@@ -8,160 +10,109 @@ import net.labymod.api.client.gui.hud.hudwidget.text.TextLine;
 import net.labymod.api.client.gui.hud.hudwidget.text.TextLine.State;
 import net.labymod.api.client.gui.icon.Icon;
 import net.labymod.api.client.resources.ResourceLocation;
-
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class OPSuchtRecordWidget extends TextHudWidget<TextHudWidgetConfig> {
 
   private static final String API_URL = "https://craftportal.net/api/opsucht-record";
-  private static final int POLL_INTERVAL_SECONDS = 60;
+  private static final int UPDATE_RATE_SECONDS = 60;
+  private static final Duration TIMEOUT = Duration.ofSeconds(5);
+  private static final HttpClient CLIENT = HttpClient.newBuilder()
+      .connectTimeout(TIMEOUT)
+      .build();
+  private static final HttpRequest REQUEST = HttpRequest.newBuilder()
+      .uri(URI.create(API_URL))
+      .GET()
+      .timeout(TIMEOUT)
+      .header("Accept", "application/json")
+      .build();
 
-  private TextLine recordLine;
-  private final AtomicReference<String> latestRecord = new AtomicReference<>(null);
+  private TextLine line;
+  private Component cachedComponent;
   private ScheduledExecutorService scheduler;
 
   public OPSuchtRecordWidget(HudWidgetCategory category) {
     super("opsucht_record_widget");
-    this.setIcon(Icon.texture(ResourceLocation.create("opsucktmarkt", "textures/record_widget.png")));
-    this.bindCategory(category);
+    setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt", "textures/record_widget.png")));
+    bindCategory(category);
   }
 
   @Override
   public void load(TextHudWidgetConfig config) {
     super.load(config);
-
-    this.recordLine = createLine(
+    line = createLine(
         Component.translatable("opsuchtmarkt.hudWidget.record_widget.name"),
         Component.translatable("opsuchtmarkt.messages.loading")
     );
 
-    this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-      Thread t = new Thread(r, "OPSuchtRecord-API-Poller");
+    scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread t = new Thread(r, "OPSuchtRecord-Fetcher");
       t.setDaemon(true);
       return t;
     });
 
-    this.scheduler.scheduleAtFixedRate(() -> {
-      try {
-        String json = fetchUrl(API_URL);
-        String parsed = parseRecordFromJson(json);
-        latestRecord.set(parsed);
-      } catch (Exception e) {
-        latestRecord.set(null);
+    scheduler.scheduleAtFixedRate(this::fetchRecord, 0, UPDATE_RATE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private void fetchRecord() {
+    try {
+      HttpResponse<String> response = CLIENT.send(REQUEST, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        cachedComponent = null;
+        return;
       }
-    }, 0, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS);
+
+      String json = response.body();
+      JsonElement root = JsonParser.parseString(json);
+
+      String recordValue = null;
+      if (root != null && root.isJsonObject()) {
+        JsonElement recordPlayers = root.getAsJsonObject().get("recordPlayers");
+        if (recordPlayers == null) {
+          recordPlayers = root.getAsJsonObject().get("players");
+        }
+
+        if (recordPlayers != null && recordPlayers.isJsonPrimitive() && recordPlayers.getAsJsonPrimitive().isNumber()) {
+          recordValue = recordPlayers.getAsString();
+        } else if (root.isJsonPrimitive() && root.getAsJsonPrimitive().isNumber()) {
+          recordValue = root.getAsString();
+        }
+      }
+
+      if (recordValue != null) {
+        Component newComponent = Component.text(recordValue);
+        if (!newComponent.equals(cachedComponent)) {
+          cachedComponent = newComponent;
+        }
+      } else {
+        cachedComponent = null;
+      }
+
+    } catch (Exception e) {
+      cachedComponent = null;
+    }
   }
 
   @Override
-  public void onTick(boolean isEditorContext) {
-    String value = latestRecord.get();
-
-    if (isEditorContext) {
-      this.recordLine.updateAndFlush(Component.text("468"));
-      this.recordLine.setState(State.VISIBLE);
+  public void onTick(boolean editor) {
+    if (editor) {
+      line.updateAndFlush(Component.text("468"));
+      line.setState(State.VISIBLE);
       return;
     }
 
-    if (value != null) {
-      this.recordLine.updateAndFlush(Component.text(value));
-      this.recordLine.setState(State.VISIBLE);
+    if (cachedComponent != null) {
+      line.updateAndFlush(cachedComponent);
+      line.setState(State.VISIBLE);
     } else {
-      this.recordLine.setState(State.HIDDEN);
+      line.setState(State.HIDDEN);
     }
-  }
-
-  public void shutdown() {
-    if (this.scheduler != null && !this.scheduler.isShutdown()) {
-      this.scheduler.shutdownNow();
-    }
-  }
-
-  private static String fetchUrl(String urlStr) throws Exception {
-    HttpURLConnection con = null;
-    InputStream is = null;
-    try {
-      URL url = new URL(urlStr);
-      con = (HttpURLConnection) url.openConnection();
-      con.setRequestMethod("GET");
-      con.setConnectTimeout(5000);
-      con.setReadTimeout(5000);
-      con.setRequestProperty("User-Agent", "OPSuchtRecord-Widget/1.0");
-
-      int code = con.getResponseCode();
-      if (code >= 200 && code < 300) {
-        is = con.getInputStream();
-      } else {
-        is = con.getErrorStream();
-        if (is == null) return null;
-      }
-
-      BufferedReader br = new BufferedReader(new InputStreamReader(is));
-      StringBuilder sb = new StringBuilder();
-      String line;
-      while ((line = br.readLine()) != null) sb.append(line);
-      return sb.toString();
-    } finally {
-      try { if (is != null) is.close(); } catch (Exception ignored) {}
-      if (con != null) con.disconnect();
-    }
-  }
-
-  private static String parseRecordFromJson(String json) {
-    if (json == null) return null;
-
-    int recordIndex = json.indexOf("\"recordPlayers\"");
-    if (recordIndex == -1) {
-      recordIndex = json.indexOf("\"recordplayers\"");
-    }
-    if (recordIndex == -1) {
-      recordIndex = json.indexOf("\"players\"");
-    }
-
-    if (recordIndex != -1) {
-      int colonIndex = json.indexOf(':', recordIndex);
-      if (colonIndex != -1) {
-        int startIndex = colonIndex + 1;
-        int endIndex = json.indexOf(',', startIndex);
-        if (endIndex == -1) {
-          endIndex = json.indexOf('}', startIndex);
-        }
-        if (endIndex == -1) {
-          endIndex = json.length();
-        }
-
-        String numberStr = json.substring(startIndex, endIndex).trim();
-        numberStr = numberStr.replace("\"", "").replace("'", "").trim();
-
-        try {
-          Long.parseLong(numberStr);
-          return numberStr;
-        } catch (NumberFormatException e) {
-        }
-      }
-    }
-
-    for (int i = 0; i < json.length(); i++) {
-      char c = json.charAt(i);
-      if (Character.isDigit(c)) {
-        int start = i;
-        while (i < json.length() && Character.isDigit(json.charAt(i))) {
-          i++;
-        }
-        String number = json.substring(start, i);
-        if (number.length() > 0) {
-          return number;
-        }
-      }
-    }
-
-    return null;
   }
 }

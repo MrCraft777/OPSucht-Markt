@@ -2,7 +2,7 @@
   "labymod": {
     "hudWidgetCategory": {
       "opsuchtmarkt": {
-        "name": "Opsucht Markt",
+        "name": "OPSUCHT Markt",
         "description": "Hier werden alle Widgets vom Opsucht Markt Addon angezeigt."
       }
     }
@@ -57,16 +57,16 @@
         "name": "Inventarwert"
       },
       "item_price": {
-        "name": "Preis"
+        "name": "Itempreis"
       },
       "opsucht_item_price": {
-        "name": "Preis"
+        "name": "Itempreis"
       },
       "record_widget": {
         "name": "Spielerrekord"
       },
       "opsucht_record_widget": {
-        "name": "Spielerrekord von OPSUCHT"
+        "name": "Spielerrekord"
       }
     },
     "auction": {
