@@ -1,4 +1,6 @@
 /*
 Copyright © 2025 Jonas Rockel
-Alle Rechte vorbehalten. Modifikation oder Weitergabe verboten.
+Alle Rechte vorbehalten.
+Modifikation, Vervielfältigung, Veröffentlichung oder Weitergabe,
+ganz oder teilweise, ohne ausdrückliche Genehmigung des Autors verboten.
 */
