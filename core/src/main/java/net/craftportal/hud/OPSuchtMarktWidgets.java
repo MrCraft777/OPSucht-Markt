@@ -96,7 +96,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
       this.setIcon(Icon.texture(ResourceLocation.create("opsuchtmarkt",
           "textures/price_widget.png")));
     } catch (Throwable t) {
-      // Ignorieren, wenn Icon nicht geladen werden kann
     }
 
     initializeColorCache();
@@ -275,7 +274,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
         }
       }
     } catch (Throwable t) {
-      // Ignorieren
     }
 
     ItemData oldItemData = currentItem.getAndSet(newItemData);
@@ -316,7 +314,6 @@ public class OPSuchtMarktWidgets extends TextHudWidget<TextHudWidgetConfig> {
         return loc.getPath();
       }
     } catch (Exception e) {
-      // Ignorieren
     }
     return "unknown";
   }
